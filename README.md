@@ -16,6 +16,12 @@
 - **💲 Exercise Price**: Configurable strike price for option exercise
 - **📉 Dilution Analysis**: Calculate dilution impact of new option grants
 
+### 🎯 Performance-Based Vesting
+- **🏆 Milestone Creation**: Set performance milestones with bonus percentages
+- **⚡ Accelerated Vesting**: Bonus options awarded when milestones are achieved
+- **📊 Performance Tracking**: Real-time calculation of performance bonuses
+- **🎁 Incentive Alignment**: Aligns employee rewards with company success
+
 ### 🔐 Governance & Security
 - **👑 Owner Controls**: Admin functions for company management
 - **🚫 Revocation**: Ability to revoke employee options
@@ -65,6 +71,25 @@ clarinet deployments apply -p deployments/default.devnet-plan.yaml
 )
 ```
 
+#### Performance Milestone Management
+```clarity
+;; Create a milestone for 10M ARR with 25% bonus
+(contract-call? .tokenized-employee-stock-option-plan create-performance-milestone 
+  "10M ARR Target"  ;; description
+  u10000000         ;; target metric
+  u25               ;; 25% bonus percentage
+)
+
+;; Mark milestone as achieved
+(contract-call? .tokenized-employee-stock-option-plan achieve-milestone u0)
+
+;; Apply performance bonus to employee
+(contract-call? .tokenized-employee-stock-option-plan apply-performance-bonus 
+  'SP1EMPLOYEE123 
+  u0  ;; milestone ID
+)
+```
+
 ### 👨‍💼 Employee Functions
 
 #### Check Vested Options
@@ -89,6 +114,12 @@ clarinet deployments apply -p deployments/default.devnet-plan.yaml
 
 ;; Get current option value
 (contract-call? .tokenized-employee-stock-option-plan get-option-value 'SP1EMPLOYEE123)
+
+;; Check performance bonuses earned
+(contract-call? .tokenized-employee-stock-option-plan get-total-performance-bonuses 'SP1EMPLOYEE123)
+
+;; Calculate potential bonus for a milestone
+(contract-call? .tokenized-employee-stock-option-plan calculate-potential-bonus 'SP1EMPLOYEE123 u0)
 ```
 
 ### 📊 Query Functions
@@ -104,6 +135,9 @@ clarinet deployments apply -p deployments/default.devnet-plan.yaml
 ```clarity
 ;; Get employee option details
 (contract-call? .tokenized-employee-stock-option-plan get-employee-options 'SP1EMPLOYEE123)
+
+;; Get performance milestone details
+(contract-call? .tokenized-employee-stock-option-plan get-performance-milestone u0)
 ```
 
 #### Token Functions
@@ -131,11 +165,15 @@ Example with 1,000 options, 1-year cliff, 4-year vesting:
 
 ## 💡 Value Calculation
 
-**Option Value** = `vested_options × (share_price - exercise_price)`
+**Option Value** = `(base_vested + performance_bonus) × (share_price - exercise_price)`
 
 Where:
+- `base_vested = linear_vesting_calculation`  
+- `performance_bonus = sum_of_milestone_bonuses`
 - `share_price = company_valuation ÷ total_shares`
 - Negative intrinsic value = 0 (options underwater)
+
+**Performance Bonus** = `total_options × (milestone_bonus_percentage ÷ 100)`
 
 ## 🧪 Testing
 

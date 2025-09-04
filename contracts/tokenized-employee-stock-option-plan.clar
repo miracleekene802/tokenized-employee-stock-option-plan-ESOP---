@@ -10,6 +10,8 @@
 (define-constant ERR-INVALID-VESTING (err u106))
 (define-constant ERR-NOT-VESTED (err u107))
 (define-constant ERR-ALREADY-EXERCISED (err u108))
+(define-constant ERR-MILESTONE-NOT-FOUND (err u109))
+(define-constant ERR-MILESTONE-ALREADY-ACHIEVED (err u110))
 
 (define-fungible-token esop-token)
 
@@ -29,10 +31,23 @@
     grant-block: uint,
     cliff-blocks: uint,
     vesting-blocks: uint,
-    active: bool
+    active: bool,
+    performance-bonus: uint
   }
 )
 
+(define-map performance-milestones
+  uint
+  {
+    description: (string-ascii 100),
+    target-metric: uint,
+    bonus-percentage: uint,
+    achieved: bool,
+    achieved-block: uint
+  }
+)
+
+(define-data-var milestone-counter uint u0)
 (define-map authorized-issuers principal bool)
 
 (define-public (get-name)
@@ -101,10 +116,11 @@
     (map-set employee-options employee {
       total-options: options,
       exercised-options: u0,
-      grant-block: stacks-block-height,
+      grant-block: burn-block-height,
       cliff-blocks: cliff-blocks,
       vesting-blocks: vesting-blocks,
-      active: true
+      active: true,
+      performance-bonus: u0
     })
     (ok true)
   )
@@ -115,21 +131,21 @@
     option-data
       (let
         (
-          (current-block stacks-block-height)
+          (current-block burn-block-height)
           (grant-block (get grant-block option-data))
           (cliff-blocks (get cliff-blocks option-data))
           (vesting-blocks (get vesting-blocks option-data))
           (total-options (get total-options option-data))
+          (performance-bonus (get performance-bonus option-data))
           (blocks-elapsed (- current-block grant-block))
+          (base-vested (if (< blocks-elapsed cliff-blocks)
+                         u0
+                         (if (>= blocks-elapsed vesting-blocks)
+                           total-options
+                           (/ (* total-options blocks-elapsed) vesting-blocks))))
         )
         (if (get active option-data)
-          (if (< blocks-elapsed cliff-blocks)
-            u0
-            (if (>= blocks-elapsed vesting-blocks)
-              total-options
-              (/ (* total-options blocks-elapsed) vesting-blocks)
-            )
-          )
+          (+ base-vested performance-bonus)
           u0
         )
       )
@@ -292,6 +308,102 @@
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
     (var-set token-uri new-uri)
     (ok true)
+  )
+)
+
+(define-public (create-performance-milestone (description (string-ascii 100)) (target-metric uint) (bonus-percentage uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> bonus-percentage u0) ERR-INVALID-AMOUNT)
+    (asserts! (<= bonus-percentage u100) ERR-INVALID-AMOUNT)
+    
+    (let
+      (
+        (milestone-id (var-get milestone-counter))
+      )
+      (map-set performance-milestones milestone-id {
+        description: description,
+        target-metric: target-metric,
+        bonus-percentage: bonus-percentage,
+        achieved: false,
+        achieved-block: u0
+      })
+      (var-set milestone-counter (+ milestone-id u1))
+      (ok milestone-id)
+    )
+  )
+)
+
+(define-public (achieve-milestone (milestone-id uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (match (map-get? performance-milestones milestone-id)
+      milestone-data
+        (begin
+          (asserts! (not (get achieved milestone-data)) ERR-MILESTONE-ALREADY-ACHIEVED)
+          (map-set performance-milestones milestone-id 
+            (merge milestone-data {achieved: true, achieved-block: burn-block-height})
+          )
+          (ok true)
+        )
+      ERR-MILESTONE-NOT-FOUND
+    )
+  )
+)
+
+(define-public (apply-performance-bonus (employee principal) (milestone-id uint))
+  (let
+    (
+      (milestone-data (unwrap! (map-get? performance-milestones milestone-id) ERR-MILESTONE-NOT-FOUND))
+      (employee-data (unwrap! (map-get? employee-options employee) ERR-EMPLOYEE-NOT-FOUND))
+    )
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (get achieved milestone-data) ERR-MILESTONE-NOT-FOUND)
+    (asserts! (get active employee-data) ERR-NOT-AUTHORIZED)
+    
+    (let
+      (
+        (total-options (get total-options employee-data))
+        (bonus-percentage (get bonus-percentage milestone-data))
+        (bonus-options (/ (* total-options bonus-percentage) u100))
+        (current-bonus (get performance-bonus employee-data))
+        (new-bonus (+ current-bonus bonus-options))
+      )
+      (map-set employee-options employee 
+        (merge employee-data {performance-bonus: new-bonus})
+      )
+      (ok bonus-options)
+    )
+  )
+)
+
+(define-read-only (get-performance-milestone (milestone-id uint))
+  (map-get? performance-milestones milestone-id)
+)
+
+(define-read-only (get-total-performance-bonuses (employee principal))
+  (match (map-get? employee-options employee)
+    option-data
+      (get performance-bonus option-data)
+    u0
+  )
+)
+
+(define-read-only (calculate-potential-bonus (employee principal) (milestone-id uint))
+  (match (map-get? performance-milestones milestone-id)
+    milestone-data
+      (match (map-get? employee-options employee)
+        employee-data
+          (let
+            (
+              (total-options (get total-options employee-data))
+              (bonus-percentage (get bonus-percentage milestone-data))
+            )
+            (/ (* total-options bonus-percentage) u100)
+          )
+        u0
+      )
+    u0
   )
 )
 
