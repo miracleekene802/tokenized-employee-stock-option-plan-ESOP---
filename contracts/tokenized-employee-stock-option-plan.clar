@@ -12,6 +12,9 @@
 (define-constant ERR-ALREADY-EXERCISED (err u108))
 (define-constant ERR-MILESTONE-NOT-FOUND (err u109))
 (define-constant ERR-MILESTONE-ALREADY-ACHIEVED (err u110))
+(define-constant ERR-BUYBACK-INACTIVE (err u111))
+(define-constant ERR-INSUFFICIENT-BUYBACK-FUNDS (err u112))
+(define-constant ERR-BELOW-MINIMUM-BUYBACK (err u113))
 
 (define-fungible-token esop-token)
 
@@ -48,6 +51,21 @@
 )
 
 (define-data-var milestone-counter uint u0)
+
+(define-data-var buyback-active bool false)
+(define-data-var buyback-price-per-token uint u0)
+(define-data-var buyback-pool uint u0)
+(define-data-var minimum-buyback-amount uint u1)
+
+(define-map buyback-history
+  {seller: principal, block: uint}
+  {
+    amount: uint,
+    price-per-token: uint,
+    total-value: uint
+  }
+)
+
 (define-map authorized-issuers principal bool)
 
 (define-public (get-name)
@@ -404,6 +422,142 @@
         u0
       )
     u0
+  )
+)
+
+(define-public (enable-buyback-program (price-per-token uint) (min-amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> price-per-token u0) ERR-INVALID-AMOUNT)
+    (asserts! (> min-amount u0) ERR-INVALID-AMOUNT)
+    
+    (var-set buyback-active true)
+    (var-set buyback-price-per-token price-per-token)
+    (var-set minimum-buyback-amount min-amount)
+    (ok true)
+  )
+)
+
+(define-public (disable-buyback-program)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (var-set buyback-active false)
+    (ok true)
+  )
+)
+
+(define-public (fund-buyback-pool (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    
+    (var-set buyback-pool (+ (var-get buyback-pool) amount))
+    (ok true)
+  )
+)
+
+(define-public (withdraw-buyback-funds (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (asserts! (<= amount (var-get buyback-pool)) ERR-INSUFFICIENT-BALANCE)
+    
+    (var-set buyback-pool (- (var-get buyback-pool) amount))
+    (ok true)
+  )
+)
+
+(define-public (sell-tokens-to-company (amount uint))
+  (let
+    (
+      (seller tx-sender)
+      (price-per-token-val (var-get buyback-price-per-token))
+      (buyback-pool-val (var-get buyback-pool))
+      (total-cost (* amount price-per-token-val))
+      (seller-balance (ft-get-balance esop-token seller))
+    )
+    (asserts! (var-get buyback-active) ERR-BUYBACK-INACTIVE)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (asserts! (>= amount (var-get minimum-buyback-amount)) ERR-BELOW-MINIMUM-BUYBACK)
+    (asserts! (>= seller-balance amount) ERR-INSUFFICIENT-BALANCE)
+    (asserts! (>= buyback-pool-val total-cost) ERR-INSUFFICIENT-BUYBACK-FUNDS)
+    
+    (try! (ft-burn? esop-token amount seller))
+    (var-set buyback-pool (- buyback-pool-val total-cost))
+    
+    (map-set buyback-history 
+      {seller: seller, block: burn-block-height}
+      {
+        amount: amount,
+        price-per-token: price-per-token-val,
+        total-value: total-cost
+      }
+    )
+    
+    (ok total-cost)
+  )
+)
+
+(define-public (update-buyback-price (new-price uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> new-price u0) ERR-INVALID-AMOUNT)
+    
+    (var-set buyback-price-per-token new-price)
+    (ok true)
+  )
+)
+
+(define-public (update-minimum-buyback (new-minimum uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> new-minimum u0) ERR-INVALID-AMOUNT)
+    
+    (var-set minimum-buyback-amount new-minimum)
+    (ok true)
+  )
+)
+
+(define-read-only (get-buyback-status)
+  {
+    active: (var-get buyback-active),
+    price-per-token: (var-get buyback-price-per-token),
+    pool-balance: (var-get buyback-pool),
+    minimum-amount: (var-get minimum-buyback-amount)
+  }
+)
+
+(define-read-only (get-buyback-transaction (seller principal) (block-number uint))
+  (map-get? buyback-history {seller: seller, block: block-number})
+)
+
+(define-read-only (calculate-buyback-value (token-amount uint))
+  (let
+    (
+      (price-per-token-val (var-get buyback-price-per-token))
+    )
+    (* token-amount price-per-token-val)
+  )
+)
+
+(define-read-only (can-execute-buyback (seller principal) (amount uint))
+  (let
+    (
+      (seller-balance (ft-get-balance esop-token seller))
+      (total-cost (* amount (var-get buyback-price-per-token)))
+      (buyback-pool-val (var-get buyback-pool))
+    )
+    {
+      has-balance: (>= seller-balance amount),
+      meets-minimum: (>= amount (var-get minimum-buyback-amount)),
+      pool-sufficient: (>= buyback-pool-val total-cost),
+      program-active: (var-get buyback-active),
+      can-proceed: (and
+        (var-get buyback-active)
+        (>= seller-balance amount)
+        (>= amount (var-get minimum-buyback-amount))
+        (>= buyback-pool-val total-cost))
+    }
   )
 )
 

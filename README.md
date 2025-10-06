@@ -22,6 +22,13 @@
 - **📊 Performance Tracking**: Real-time calculation of performance bonuses
 - **🎁 Incentive Alignment**: Aligns employee rewards with company success
 
+### 💰 Token Buyback Program
+- **🔄 Liquidity Provider**: Company repurchases tokens from employees
+- **💵 Guaranteed Exit**: Employees can sell tokens at predefined prices
+- **📊 Pool Management**: Company funds and manages buyback pool
+- **🎯 Price Control**: Dynamic pricing and minimum transaction amounts
+- **📈 Supply Management**: Reduces circulating supply through token burns
+
 ### 🔐 Governance & Security
 - **👑 Owner Controls**: Admin functions for company management
 - **🚫 Revocation**: Ability to revoke employee options
@@ -90,6 +97,24 @@ clarinet deployments apply -p deployments/default.devnet-plan.yaml
 )
 ```
 
+#### Token Buyback Program
+```clarity
+;; Enable buyback at $8 per token, minimum 10 tokens
+(contract-call? .tokenized-employee-stock-option-plan enable-buyback-program 
+  u8   ;; price per token
+  u10  ;; minimum buyback amount
+)
+
+;; Fund the buyback pool
+(contract-call? .tokenized-employee-stock-option-plan fund-buyback-pool u100000)
+
+;; Update buyback price
+(contract-call? .tokenized-employee-stock-option-plan update-buyback-price u10)
+
+;; Disable buyback program
+(contract-call? .tokenized-employee-stock-option-plan disable-buyback-program)
+```
+
 ### 👨‍💼 Employee Functions
 
 #### Check Vested Options
@@ -122,6 +147,18 @@ clarinet deployments apply -p deployments/default.devnet-plan.yaml
 (contract-call? .tokenized-employee-stock-option-plan calculate-potential-bonus 'SP1EMPLOYEE123 u0)
 ```
 
+#### Sell Tokens via Buyback
+```clarity
+;; Check if you can execute a buyback
+(contract-call? .tokenized-employee-stock-option-plan can-execute-buyback tx-sender u50)
+
+;; Calculate buyback value for tokens
+(contract-call? .tokenized-employee-stock-option-plan calculate-buyback-value u50)
+
+;; Sell tokens to company
+(contract-call? .tokenized-employee-stock-option-plan sell-tokens-to-company u50)
+```
+
 ### 📊 Query Functions
 
 #### Company Metrics
@@ -138,6 +175,16 @@ clarinet deployments apply -p deployments/default.devnet-plan.yaml
 
 ;; Get performance milestone details
 (contract-call? .tokenized-employee-stock-option-plan get-performance-milestone u0)
+```
+
+#### Buyback Program Data
+```clarity
+;; Get buyback program status
+(contract-call? .tokenized-employee-stock-option-plan get-buyback-status)
+;; Returns: {active: bool, price-per-token: uint, pool-balance: uint, minimum-amount: uint}
+
+;; Get historical buyback transaction
+(contract-call? .tokenized-employee-stock-option-plan get-buyback-transaction 'SP1SELLER block-number)
 ```
 
 #### Token Functions
