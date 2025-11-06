@@ -15,6 +15,7 @@
 (define-constant ERR-BUYBACK-INACTIVE (err u111))
 (define-constant ERR-INSUFFICIENT-BUYBACK-FUNDS (err u112))
 (define-constant ERR-BELOW-MINIMUM-BUYBACK (err u113))
+(define-constant ERR-PAUSED (err u114))
 
 (define-fungible-token esop-token)
 
@@ -25,6 +26,7 @@
 (define-data-var company-valuation uint u0)
 (define-data-var total-shares uint u1000000)
 (define-data-var exercise-price uint u10)
+(define-data-var paused bool false)
 
 (define-map employee-options 
   principal 
@@ -67,6 +69,7 @@
 )
 
 (define-map authorized-issuers principal bool)
+(define-map board-members principal bool)
 
 (define-public (get-name)
   (ok (var-get token-name))
@@ -94,6 +97,7 @@
 
 (define-public (transfer (amount uint) (from principal) (to principal) (memo (optional (buff 34))))
   (begin
+    (asserts! (not (var-get paused)) ERR-PAUSED)
     (asserts! (or (is-eq from tx-sender) (is-eq from contract-caller)) ERR-NOT-AUTHORIZED)
     (asserts! (> amount u0) ERR-INVALID-AMOUNT)
     (asserts! (not (is-eq from to)) ERR-INVALID-RECIPIENT)
@@ -234,6 +238,27 @@
   (map-get? employee-options employee)
 )
 
+(define-read-only (get-employee-grant (employee principal))
+  (match (map-get? employee-options employee)
+    data
+      (some {
+        total-allocation: (get total-options data),
+        cliff-blocks: (get cliff-blocks data),
+        vesting-blocks: (get vesting-blocks data),
+        active: (get active data)
+      })
+    none
+  )
+)
+
+(define-read-only (calculate-vested-amount (employee principal))
+  (calculate-vested-options employee)
+)
+
+(define-public (vest-options (employee principal))
+  (ok (calculate-vested-options employee))
+)
+
 (define-read-only (get-company-metrics)
   {
     valuation: (var-get company-valuation),
@@ -245,6 +270,42 @@
   }
 )
 
+(define-public (update-company-valuation (new-valuation uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (var-set company-valuation new-valuation)
+    (ok true)
+  )
+)
+
+(define-public (update-total-shares (new-total uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (var-set total-shares new-total)
+    (ok true)
+  )
+)
+
+(define-public (update-exercise-price (new-price uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (var-set exercise-price new-price)
+    (ok true)
+  )
+)
+
+(define-read-only (get-company-valuation)
+  (var-get company-valuation)
+)
+
+(define-read-only (get-total-shares)
+  (var-get total-shares)
+)
+
+(define-read-only (get-exercise-price)
+  (var-get exercise-price)
+)
+
 (define-public (revoke-options (employee principal))
   (begin
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
@@ -252,6 +313,20 @@
       option-data
         (begin
           (map-set employee-options employee (merge option-data {active: false}))
+          (ok true)
+        )
+      ERR-EMPLOYEE-NOT-FOUND
+    )
+  )
+)
+
+(define-public (revoke-grant (employee principal))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (match (map-get? employee-options employee)
+      data
+        (begin
+          (map-set employee-options employee (merge data {active: false}))
           (ok true)
         )
       ERR-EMPLOYEE-NOT-FOUND
@@ -301,11 +376,28 @@
   )
 )
 
+(define-read-only (calculate-option-value (employee principal))
+  (get-option-value employee)
+)
+
 (define-public (emergency-pause)
   (begin
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (var-set paused true)
     (ok true)
   )
+)
+
+(define-public (resume)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (var-set paused false)
+    (ok true)
+  )
+)
+
+(define-read-only (is-paused)
+  (var-get paused)
 )
 
 (define-read-only (calculate-dilution (new-options uint))
@@ -476,6 +568,7 @@
       (total-cost (* amount price-per-token-val))
       (seller-balance (ft-get-balance esop-token seller))
     )
+    (asserts! (not (var-get paused)) ERR-PAUSED)
     (asserts! (var-get buyback-active) ERR-BUYBACK-INACTIVE)
     (asserts! (> amount u0) ERR-INVALID-AMOUNT)
     (asserts! (>= amount (var-get minimum-buyback-amount)) ERR-BELOW-MINIMUM-BUYBACK)
@@ -559,6 +652,18 @@
         (>= buyback-pool-val total-cost))
     }
   )
+)
+
+(define-public (add-board-member (member principal))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (map-set board-members member true)
+    (ok true)
+  )
+)
+
+(define-read-only (is-board-member (member principal))
+  (default-to false (map-get? board-members member))
 )
 
 (map-set authorized-issuers CONTRACT-OWNER true)
