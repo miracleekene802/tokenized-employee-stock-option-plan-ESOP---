@@ -192,6 +192,50 @@
   )
 )
 
+(define-read-only (calculate-vested-options-at (employee principal) (snapshot-height uint))
+  (match (map-get? employee-options employee)
+    option-data
+      (let
+        (
+          (current-block snapshot-height)
+          (grant-block (get grant-block option-data))
+          (cliff-blocks (get cliff-blocks option-data))
+          (vesting-blocks (get vesting-blocks option-data))
+          (total-options (get total-options option-data))
+          (performance-bonus (get performance-bonus option-data))
+          (blocks-elapsed (if (>= current-block grant-block) (- current-block grant-block) u0))
+          (base-vested (if (< blocks-elapsed cliff-blocks)
+                         u0
+                         (if (>= blocks-elapsed vesting-blocks)
+                           total-options
+                           (/ (* total-options blocks-elapsed) vesting-blocks))))
+        )
+        (if (get active option-data)
+          (+ base-vested performance-bonus)
+          u0
+        )
+      )
+    u0
+  )
+)
+
+(define-read-only (get-exercisable-options-at (employee principal) (snapshot-height uint))
+  (match (map-get? employee-options employee)
+    option-data
+      (let
+        (
+          (vested-options (calculate-vested-options-at employee snapshot-height))
+          (exercised-options (get exercised-options option-data))
+        )
+        (if (>= vested-options exercised-options)
+          (- vested-options exercised-options)
+          u0
+        )
+      )
+    u0
+  )
+)
+
 (define-public (exercise-options (amount uint))
   (let
     (
@@ -215,6 +259,29 @@
   (let
     (
       (vested-options (calculate-vested-options employee))
+      (company-val (var-get company-valuation))
+      (total-shares-val (var-get total-shares))
+      (exercise-price-val (var-get exercise-price))
+    )
+    (if (and (> company-val u0) (> total-shares-val u0))
+      (let
+        (
+          (share-price (/ company-val total-shares-val))
+          (intrinsic-value (if (> share-price exercise-price-val)
+                             (- share-price exercise-price-val)
+                             u0))
+        )
+        (* vested-options intrinsic-value)
+      )
+      u0
+    )
+  )
+)
+
+(define-read-only (get-option-value-at (employee principal) (snapshot-height uint))
+  (let
+    (
+      (vested-options (calculate-vested-options-at employee snapshot-height))
       (company-val (var-get company-valuation))
       (total-shares-val (var-get total-shares))
       (exercise-price-val (var-get exercise-price))
