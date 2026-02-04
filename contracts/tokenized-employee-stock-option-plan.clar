@@ -70,6 +70,7 @@
 
 (define-map authorized-issuers principal bool)
 (define-map board-members principal bool)
+(define-map exercise-delegates principal principal)
 
 (define-public (get-name)
   (ok (var-get token-name))
@@ -255,6 +256,46 @@
   )
 )
 
+(define-public (set-exercise-delegate (delegate principal))
+  (begin
+    (map-set exercise-delegates tx-sender delegate)
+    (ok true)
+  )
+)
+
+(define-public (clear-exercise-delegate)
+  (begin
+    (map-delete exercise-delegates tx-sender)
+    (ok true)
+  )
+)
+
+(define-read-only (get-exercise-delegate (employee principal))
+  (map-get? exercise-delegates employee)
+)
+
+(define-public (exercise-options-by-delegate (employee principal) (amount uint))
+  (let
+    (
+      (caller tx-sender)
+      (delegate-opt (map-get? exercise-delegates employee))
+      (option-data (unwrap! (map-get? employee-options employee) ERR-EMPLOYEE-NOT-FOUND))
+      (exercisable (get-exercisable-options employee))
+    )
+    (match delegate-opt
+      delegate
+        (begin
+          (asserts! (is-eq delegate caller) ERR-NOT-AUTHORIZED)
+          (asserts! (get active option-data) ERR-NOT-AUTHORIZED)
+          (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+          (asserts! (<= amount exercisable) ERR-NOT-VESTED)
+          (map-set employee-options employee (merge option-data {exercised-options: (+ (get exercised-options option-data) amount)}))
+          (ft-mint? esop-token amount employee)
+        )
+      ERR-NOT-AUTHORIZED
+    )
+  )
+)
 (define-read-only (get-option-value (employee principal))
   (let
     (
